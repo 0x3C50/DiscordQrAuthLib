@@ -219,7 +219,7 @@ public class DiscordQrAuthClient {
             .header("Content-Type", "application/json")
             .build();
         HttpResponse<String> send = client.send(req, HttpResponse.BodyHandlers.ofString());
-        EncryptedTokenResponse encryptedTokenResponse = gson.fromJson(send.body(), EncryptedTokenResponse.class);
+        Structs.EncryptedTokenResponse encryptedTokenResponse = gson.fromJson(send.body(), Structs.EncryptedTokenResponse.class);
         byte[] bytes = decryptUsingKey(Base64.getDecoder().decode(encryptedTokenResponse.encryptedToken));
         return new String(bytes);
     }

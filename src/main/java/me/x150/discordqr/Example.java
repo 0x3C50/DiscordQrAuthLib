@@ -1,6 +1,11 @@
 package me.x150.discordqr;
 
+import java.io.IOException;
+
 public class Example {
+    /*
+    Creates a QR code and waits for the user to scan it
+     */
     public static void main(String[] args) throws Exception {
         DiscordQrAuthClient discordAuth = new DiscordQrAuthClient(Throwable::printStackTrace);  // create the client, logging any errors
         discordAuth.getCodeFuture()
@@ -10,5 +15,13 @@ public class Example {
         discordAuth.start();  // start the client
         String s1 = discordAuth.getTokenFuture().get();  // wait for the token to arrive
         System.out.println("OK: " + s1); // print the token
+    }
+
+    /*
+    Logs into an existing QR code
+     */
+    public static void loginWithQr() throws IOException, InterruptedException {
+        DiscordQrAuthUser user = new DiscordQrAuthUser("token-logging-in-here", "qr-code-fingerprint-here", false);
+        user.login();
     }
 }
