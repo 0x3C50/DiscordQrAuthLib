@@ -1,0 +1,40 @@
+plugins {
+    id 'java'
+}
+
+group 'me.x150.discordqr'
+version '1.0-SNAPSHOT'
+
+repositories {
+    mavenCentral()
+}
+configurations {
+    include
+}
+dependencies {
+    include 'com.google.code.gson:gson:2.9.0'
+    include 'org.java-websocket:Java-WebSocket:1.5.3'
+    include 'org.bouncycastle:bcpkix-jdk15on:1.70'
+
+    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.8.2'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.8.2'
+
+    configurations.include.dependencies.each {
+        implementation(it)
+    }
+}
+jar {
+    manifest {
+        attributes(
+                "Main-Class": "me.x150.discordqr.Main"
+        )
+    }
+    from {
+        configurations.include.collect { it.isDirectory() ? it : zipTree(it) }
+    }
+    exclude 'META-INF/*.RSA', 'META-INF/*.SF','META-INF/*.DSA'
+    duplicatesStrategy(DuplicatesStrategy.EXCLUDE)
+}
+test {
+    useJUnitPlatform()
+}
