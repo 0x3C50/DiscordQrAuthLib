@@ -24,7 +24,7 @@ class PacketWebsocket extends WebSocketClient {
 
     @Override
     public void send(String text) {
-        System.out.println("OUT "+text);
+        System.out.println("OUT " + text);
         super.send(text);
     }
 

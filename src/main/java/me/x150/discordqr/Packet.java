@@ -14,7 +14,9 @@ class Packet {
         this.op = obj.get("op").getAsString();
         this.data = new HashMap<>();
         for (String s : obj.keySet()) {
-            if (s.equals("op")) continue;
+            if (s.equals("op")) {
+                continue;
+            }
             data.put(s, obj.get(s));
         }
     }

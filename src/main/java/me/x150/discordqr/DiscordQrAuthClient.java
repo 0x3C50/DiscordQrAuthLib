@@ -1,13 +1,18 @@
 package me.x150.discordqr;
 
+import com.google.gson.Gson;
+import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
-import me.x150.discordqr.exc.UserCancelledException;
 import me.x150.discordqr.exc.TimedOutException;
+import me.x150.discordqr.exc.UserCancelledException;
 
 import javax.crypto.Cipher;
 import javax.crypto.spec.OAEPParameterSpec;
 import javax.crypto.spec.PSource;
 import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.MessageDigest;
@@ -31,49 +36,30 @@ import java.util.function.Consumer;
  *     <li>Server responds with "pending_remote_init", containing the ID of the created qr code session</li>
  *     <p>...</p>
  *     <li>User scans the QR code, server sends "pending_ticket", containing the encrypted user data of the client (without token). The user data consists of the username, discriminator, user ID and avatar ID</li>
- *     <li>If the user accepts, the server sends "pending_login", containing the <b>unencrypted</b> token of the user</li>
+ *     <li>If the user accepts, the server sends "pending_login", containing a ticket. This can then be used in a POST to https://discord.com/api/v9/users/@me/remote-auth/login, where the encrypted token is replied with</li>
  *     <li>If the user declines, the server sends "cancel", and the connection is closed</li>
  * </ol>
  */
 public class DiscordQrAuthClient {
     private static final URI WEBSOCKET_URI = URI.create("wss://remote-auth-gateway.discord.gg/?v=2");
+    private static final URI EXCHANGE_URI = URI.create("https://discord.com/api/v9/users/@me/remote-auth/login");
+    private static final HttpClient client = HttpClient.newHttpClient();
+    private static final Gson gson = new Gson();
     private final PacketWebsocket pws;
-    private Thread intervalRunner;
     private final AtomicBoolean stop = new AtomicBoolean(false);
-    private Cipher cipher;
-    private KeyPair keys;
     private final Consumer<Throwable> error;
     private final CompletableFuture<String> tokenFuture = new CompletableFuture<>();
     private final CompletableFuture<String> codeFuture = new CompletableFuture<>();
     private final CompletableFuture<DiscordUser> codeScanned = new CompletableFuture<>();
-
-    /**
-     * Returns the future for the token
-     * @return The future for the token
-     */
-    public CompletableFuture<String> getTokenFuture() {
-        return tokenFuture;
-    }
-
-    /**
-     * Returns the future for the fingerprint
-     * @return The future for the fingerprint
-     */
-    public CompletableFuture<String> getCodeFuture() {
-        return codeFuture;
-    }
-
-    /**
-     * Returns the future for the target user
-     * @return The future for the target user
-     */
-    public CompletableFuture<DiscordUser> getCodeScannedFuture() {
-        return codeScanned;
-    }
+    private Thread intervalRunner;
+    private Cipher cipher;
+    private KeyPair keys;
 
     /**
      * Initializes a new qr code authorization client
+     *
      * @param onError A callback, handling thrown exceptions
+     *
      * @throws Exception When key initialisation fails
      */
     public DiscordQrAuthClient(Consumer<Throwable> onError) throws Exception {
@@ -94,11 +80,41 @@ public class DiscordQrAuthClient {
     }
 
     /**
+     * Returns the future for the token
+     *
+     * @return The future for the token
+     */
+    public CompletableFuture<String> getTokenFuture() {
+        return tokenFuture;
+    }
+
+    /**
+     * Returns the future for the fingerprint
+     *
+     * @return The future for the fingerprint
+     */
+    public CompletableFuture<String> getCodeFuture() {
+        return codeFuture;
+    }
+
+    /**
+     * Returns the future for the target user
+     *
+     * @return The future for the target user
+     */
+    public CompletableFuture<DiscordUser> getCodeScannedFuture() {
+        return codeScanned;
+    }
+
+    /**
      * Starts this qr code auth session, and connects to discord
+     *
      * @throws InterruptedException If the connection attempt is interrupted
      */
     public void start() throws InterruptedException {
-        if (stop.get()) throw new IllegalStateException("Already closed");
+        if (stop.get()) {
+            throw new IllegalStateException("Already closed");
+        }
         pws.connectBlocking();
     }
 
@@ -137,7 +153,7 @@ public class DiscordQrAuthClient {
     }
 
     private void handlePacket(Packet packet) {
-        System.out.println("IN "+packet);
+        System.out.println("IN " + packet);
         switch (packet.op) {
             case "hello" -> {
                 long interv = packet.data.get("heartbeat_interval").getAsLong();
@@ -176,7 +192,8 @@ public class DiscordQrAuthClient {
             }
             case "pending_login" -> {
                 try {
-                    String token = packet.data.get("ticket").getAsString();
+                    String ticket = packet.data.get("ticket").getAsString();
+                    String token = decryptAndExchangeToken(ticket);
                     this.tokenFuture.complete(token);
                     close();
                 } catch (Throwable e) {
@@ -192,6 +209,19 @@ public class DiscordQrAuthClient {
                 }
             }
         }
+    }
+
+    private String decryptAndExchangeToken(String ticket) throws Exception {
+        JsonObject body = new JsonObject();
+        body.addProperty("ticket", ticket);
+        HttpRequest req = HttpRequest.newBuilder(EXCHANGE_URI)
+            .POST(HttpRequest.BodyPublishers.ofString(gson.toJson(body)))
+            .header("Content-Type", "application/json")
+            .build();
+        HttpResponse<String> send = client.send(req, HttpResponse.BodyHandlers.ofString());
+        EncryptedTokenResponse encryptedTokenResponse = gson.fromJson(send.body(), EncryptedTokenResponse.class);
+        byte[] bytes = decryptUsingKey(Base64.getDecoder().decode(encryptedTokenResponse.encryptedToken));
+        return new String(bytes);
     }
 
     private void runInterval(long interval) {
@@ -217,9 +247,10 @@ public class DiscordQrAuthClient {
 
     /**
      * A discord user
-     * @param id The ID of the discord user
-     * @param avatar The avatar ID of the discord user
-     * @param username The username of the discord user
+     *
+     * @param id            The ID of the discord user
+     * @param avatar        The avatar ID of the discord user
+     * @param username      The username of the discord user
      * @param discriminator The discriminator of the discord user
      */
     public record DiscordUser(String id, String avatar, String username, long discriminator) {
